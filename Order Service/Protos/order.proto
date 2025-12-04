@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+option csharp_namespace = "Order_Service";
+
+package Order;
+
+service PlaceOrder {
+  rpc PlaceOrder (PlaceOrderRequest) returns (PlaceOrderResponse);
+}
+
+message PlaceOrderRequest {
+  int32 productId = 1;
+  int32 quantity = 2;
+}
+
+message PlaceOrderResponse {
+  string orderId = 1;
+  bool success = 2;
+  string message = 3;
+}
