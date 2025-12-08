@@ -1,0 +1,11 @@
+/staticfiles/
+media/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+.vscode/
+node_modules/
+coverage/
+*.log
+*.sqlite3
