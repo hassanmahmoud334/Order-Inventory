@@ -1,10 +1,20 @@
+using Microsoft.EntityFrameworkCore;
+using Order_Service.Data;
+using Order_Service.Outbox;
 using Order_Service.Services;
+using Order_Service.Messaging;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 // Add services to the container.
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection")
+    ));
 builder.Services.AddGrpc();
-builder.Services.AddSingleton<Order_Service.Messaging.IMessageProducer, Order_Service.Messaging.RabbitMQProducer>();
+builder.Services.AddSingleton<IMessageProducer, RabbitMQProducer>();
+builder.Services.AddHostedService<OutboxPublisher>();
 
 var app = builder.Build();
 

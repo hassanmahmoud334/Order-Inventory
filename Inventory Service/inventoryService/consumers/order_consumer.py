@@ -18,7 +18,7 @@ def callback(ch, method, properties, body):
     try:
         from inventory.models import Product    
         data = json.loads(body)
-        product_sku = data["OrderId"]
+        product_sku = data["ProductId"]
         quantity = data["Quantity"]
 
         print(f"[x] Received order for {product_sku} - qty {quantity}")
@@ -53,7 +53,7 @@ def start_consumer():
     channel = connection.channel()
 
     # Ensure queue exists
-    channel.queue_declare(queue="orderQueue", durable=False)
+    channel.queue_declare(queue="orderQueue", durable=True)
 
     print("[*] Inventory service waiting for messages...")
     channel.basic_qos(prefetch_count=1)

@@ -11,3 +11,6 @@ class Product(models.Model):
             self.save()
             return True
         return False
+    
+    def __str__(self):
+        return f"{self.sku} ({self.quantity})"
