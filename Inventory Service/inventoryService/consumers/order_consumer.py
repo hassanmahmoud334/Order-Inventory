@@ -52,8 +52,8 @@ def callback(ch, method, properties, body):
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Product.DoesNotExist:
-        print("[❌] Product not found")
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        print("[❌] Product not found  → sending to DLQ")
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
     except Exception as e:
         print("[🔥 ERROR]", e)
@@ -72,7 +72,7 @@ def start_consumer():
 
     channel = connection.channel()
 
-    channel.queue_declare(queue="orderQueue", durable=True)
+    # channel.queue_declare(queue="orderQueue", durable=True)
     channel.basic_qos(prefetch_count=1)
 
     print("[*] Inventory service waiting for messages...")

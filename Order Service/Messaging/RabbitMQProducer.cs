@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Http.HttpResults;
+﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Http.HttpResults;
 using RabbitMQ.Client;
 using System.Text;
 using System.Text.Json.Serialization;
@@ -27,13 +28,42 @@ namespace Order_Service.Messaging
                 string routingKey = queueName;
                 string _queueName = queueName;
 
+                // Declare DLX
+                await channel.ExchangeDeclareAsync(
+                    exchange: "order.dlx",
+                    type: ExchangeType.Direct,
+                    durable: true
+                );
+
+                // Declare DLQ
+                await channel.QueueDeclareAsync(
+                    queue: "orderQueue.dlq",
+                    durable: true,
+                    exclusive: false,
+                    autoDelete: false,
+                    arguments: null
+                );
+
+                await channel.QueueBindAsync(
+                    queue: "orderQueue.dlq",
+                    exchange: "order.dlx",
+                    routingKey: "order.dead"
+                );
+
+                // Declare main queue WITH DLQ settings
+                var args = new Dictionary<string, object>
+                {
+                    { "x-dead-letter-exchange", "order.dlx" },
+                    { "x-dead-letter-routing-key", "order.dead" }
+                };
+
                 //await channel.ExchangeDeclareAsync(exchangeName, ExchangeType.Direct);
-                await channel.QueueDeclareAsync(_queueName, true, false, false, null);
+                await channel.QueueDeclareAsync(_queueName, true, false, false, args);
                 //await channel.QueueBindAsync(_queueName, exchangeName, routingKey, null);
 
 
                 var messageBody = Encoding.UTF8.GetBytes(payload);
-                var props = new BasicProperties();
+                var props = new BasicProperties { Persistent = true };
                 await channel.BasicPublishAsync(exchangeName, routingKey, false, props, messageBody);
 
 
