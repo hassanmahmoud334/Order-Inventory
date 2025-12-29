@@ -12,7 +12,11 @@ namespace Order_Service.Messaging
         public async Task PublishAsync(string queueName, string payload)
         {
 
-            var factory = new ConnectionFactory { HostName = "localhost" };
+            var factory = new ConnectionFactory 
+            {   HostName = "localhost",
+                UserName = "guest",
+                Password = "guest"
+            };
             IConnection connection = await factory.CreateConnectionAsync();
             IChannel channel = await connection.CreateChannelAsync();
 

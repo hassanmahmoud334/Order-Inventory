@@ -14,3 +14,8 @@ class Product(models.Model):
     
     def __str__(self):
         return f"{self.sku} ({self.quantity})"
+
+class ProcessedEvent(models.Model):
+    event_id = models.UUIDField(primary_key=True)
+    processed_at = models.DateTimeField(auto_now_add=True)
+

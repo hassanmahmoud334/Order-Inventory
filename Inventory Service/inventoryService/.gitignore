@@ -9,3 +9,6 @@ node_modules/
 coverage/
 *.log
 *.sqlite3
+Dockerfile
+docker-compose.yml
+requirements.txt

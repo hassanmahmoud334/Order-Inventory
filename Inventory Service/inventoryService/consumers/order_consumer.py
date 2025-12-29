@@ -3,6 +3,7 @@ import pika
 import django
 import os
 import sys
+from django.db import transaction
 
 # --- Django Setup ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,39 +13,58 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "inventoryService.settings")
 django.setup()
 
 
-
-# --- Handle incoming orders ---
 def callback(ch, method, properties, body):
     try:
-        from inventory.models import Product    
+        from inventory.models import Product, ProcessedEvent
+
         data = json.loads(body)
+
+        event_id = data["EventId"]
         product_sku = data["ProductId"]
         quantity = data["Quantity"]
 
-        print(f"[x] Received order for {product_sku} - qty {quantity}")
+        # 1️⃣ Idempotency check
+        if ProcessedEvent.objects.filter(event_id=event_id).exists():
+            print(f"[↩] Duplicate event {event_id}, skipping")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
-        product = Product.objects.get(sku=product_sku)
-        ok = product.decrease_stock(quantity)
+        print(f"[x] Processing event {event_id}")
+        print(f"    Product {product_sku} - qty {quantity}")
 
-        if ok:
-            print("[✔] Stock updated successfully")
-        else:
-            print("[❌] Not enough stock!")
+        # 2️⃣ Atomic operation
+        with transaction.atomic():
+            product = Product.objects.select_for_update().get(sku=product_sku)
+
+            if product.quantity < quantity:
+                print("[❌] Not enough stock!")
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
+            product.quantity -= quantity
+            product.save()
+
+            ProcessedEvent.objects.create(event_id=event_id)
+
+        print("[✔] Stock updated & event recorded")
+
+        # 3️⃣ ACK only after success
+        ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Product.DoesNotExist:
         print("[❌] Product not found")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
     except Exception as e:
-        print("[ERROR]", e)
+        print("[🔥 ERROR]", e)
+        # ❗ Do NOT ACK → message will retry
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-    ch.basic_ack(delivery_tag=method.delivery_tag)
 
-
-# --- Start RabbitMQ Consumer ---
 def start_consumer():
-
     connection = pika.BlockingConnection(
         pika.ConnectionParameters(
-            host="localhost",            # change if using container host
+            host="localhost",
             port=5672,
             credentials=pika.PlainCredentials("guest", "guest")
         )
@@ -52,12 +72,10 @@ def start_consumer():
 
     channel = connection.channel()
 
-    # Ensure queue exists
     channel.queue_declare(queue="orderQueue", durable=True)
-
-    print("[*] Inventory service waiting for messages...")
     channel.basic_qos(prefetch_count=1)
 
+    print("[*] Inventory service waiting for messages...")
     channel.basic_consume(
         queue="orderQueue",
         on_message_callback=callback

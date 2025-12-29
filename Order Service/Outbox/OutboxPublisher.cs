@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Order_Service.Data;
 using Order_Service.Messaging;
+using System.Text.Json;
 
 namespace Order_Service.Outbox
 {
@@ -34,12 +35,24 @@ namespace Order_Service.Outbox
                 {
                     try
                     {
-                        await _publisher.PublishAsync("orderQueue", msg.Payload);
+                        var envelope = new
+                        {
+                            EventId = msg.Id,
+                            Type = msg.Type,
+                            ProductId = JsonDocument.Parse(msg.Payload).RootElement.GetProperty("ProductId").GetInt32(),
+                            Quantity = JsonDocument.Parse(msg.Payload).RootElement.GetProperty("Quantity").GetInt32(),
+                            OccurredAt = msg.CreatedAt
+                        };
+
+                        var json = JsonSerializer.Serialize(envelope);
+
+                        await _publisher.PublishAsync("orderQueue", json);
+
                         msg.ProcessedAt = DateTime.UtcNow;
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // RabbitMQ down → retry later
+                        Console.WriteLine($"Outbox publish failed: {ex.Message}");
                     }
                 }
 
@@ -48,5 +61,4 @@ namespace Order_Service.Outbox
             }
         }
     }
-
 }
