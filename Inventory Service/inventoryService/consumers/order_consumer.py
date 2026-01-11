@@ -11,7 +11,7 @@ sys.path.append(BASE_DIR)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "inventoryService.settings")
 django.setup()
-
+MAX_RETRIES = 3
 
 def callback(ch, method, properties, body):
     try:
@@ -52,13 +52,43 @@ def callback(ch, method, properties, body):
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     except Product.DoesNotExist:
-        print("[❌] Product not found  → sending to DLQ")
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        print("[!] Product not found - retrying...")
+        _handle_retry(ch, method, properties, body)
 
     except Exception as e:
-        print("[🔥 ERROR]", e)
-        # ❗ Do NOT ACK → message will retry
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+        print(f"[!] Error: {str(e)} - retrying...")
+        _handle_retry(ch, method, properties, body)
+
+
+def _handle_retry(ch, method, properties, body):
+    """Handle message retry with TTL"""
+    headers = properties.headers or {}
+    retry_count = int(headers.get("x-retry-count", 0))
+
+    if retry_count >= MAX_RETRIES:
+        print(f"[☠] Max retries ({MAX_RETRIES}) reached → DLQ")
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return
+
+    retry_count += 1
+    print(f"[🔁] Retry {retry_count}/{MAX_RETRIES}")
+
+    headers["x-retry-count"] = retry_count
+
+    # Publish to retry queue using default exchange
+    ch.basic_publish(
+        exchange="",  # Default exchange
+        routing_key="orderQueue.retry",
+        body=body,
+        properties=pika.BasicProperties(
+            headers=headers,
+            delivery_mode=2  # Persistent
+        )
+    )
+
+    # ACK the original message after successfully publishing to retry queue
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
 
 
 def start_consumer():
@@ -72,10 +102,50 @@ def start_consumer():
 
     channel = connection.channel()
 
-    # channel.queue_declare(queue="orderQueue", durable=True)
+    # 🔴 Declare DLX Exchange
+    channel.exchange_declare(exchange="order.dlx", exchange_type="direct", durable=True)
+
+    # 🟢 Main Queue with DLX fallback
+    main_queue_args = {
+        "x-dead-letter-exchange": "order.dlx",  # Send to DLX exchange
+        "x-dead-letter-routing-key": "order.dead"
+    }
+    channel.queue_declare(
+        queue="orderQueue",
+        durable=True,
+        arguments=main_queue_args
+    )
+
+    # 🟡 Retry Queue with TTL (5 seconds) → back to main queue via default exchange
+    retry_queue_args = {
+        "x-message-ttl": 5000,  # 5 seconds TTL
+        "x-dead-letter-exchange": "",  # Send back to default exchange
+        "x-dead-letter-routing-key": "orderQueue"  # Back to main queue
+    }
+    channel.queue_declare(
+        queue="orderQueue.retry",
+        durable=True,
+        arguments=retry_queue_args
+    )
+
+    # 🔴 DLQ - Bind to DLX
+    channel.queue_declare(
+        queue="orderQueue.dlq",
+        durable=True
+    )
+    channel.queue_bind(
+        exchange="order.dlx",
+        queue="orderQueue.dlq",
+        routing_key="order.dead"
+    )
+
     channel.basic_qos(prefetch_count=1)
 
     print("[*] Inventory service waiting for messages...")
+    print("[*] Main Queue: orderQueue")
+    print("[*] Retry Queue: orderQueue.retry (TTL: 5s)")
+    print("[*] DLQ: orderQueue.dlq")
+    
     channel.basic_consume(
         queue="orderQueue",
         on_message_callback=callback
