@@ -1,8 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Order_Service.Data;
+using Order_Service.Messaging;
 using Order_Service.Outbox;
 using Order_Service.Services;
-using Order_Service.Messaging;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,6 +20,8 @@ builder.Services.AddHostedService<OutboxPublisher>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.UseMetricServer();
+app.UseHttpMetrics();
 app.MapGrpcService<OrderService>();
 app.MapGet("/", () => "Order Service running - use gRPC client.");
 

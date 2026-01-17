@@ -4,6 +4,9 @@ import django
 import os
 import sys
 from django.db import transaction
+from prometheus_client import start_http_server, Histogram
+
+from datetime import datetime, timezone
 
 # --- Django Setup ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,15 +16,32 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "inventoryService.settings")
 django.setup()
 MAX_RETRIES = 3
 
+
+QUEUE_LATENCY = Histogram(
+    "inventory_queue_latency_seconds",
+    "Time from publish to consume",
+    buckets=(0.1, 0.3, 0.5, 1, 2, 5, 10)
+)
+
 def callback(ch, method, properties, body):
     try:
         from inventory.models import Product, ProcessedEvent
+        from inventory.metrics import orders_consumed
 
         data = json.loads(body)
 
         event_id = data["EventId"]
         product_sku = data["ProductId"]
         quantity = data["Quantity"]
+
+        published_at = datetime.fromisoformat(
+            data["OccurredAt"].replace("Z", "+00:00")
+        )
+
+        now = datetime.now(timezone.utc)
+        latency = (now - published_at).total_seconds()
+
+        QUEUE_LATENCY.observe(latency)
 
         # 1️⃣ Idempotency check
         if ProcessedEvent.objects.filter(event_id=event_id).exists():
@@ -50,7 +70,7 @@ def callback(ch, method, properties, body):
 
         # 3️⃣ ACK only after success
         ch.basic_ack(delivery_tag=method.delivery_tag)
-
+        orders_consumed.inc()
     except Product.DoesNotExist:
         print("[!] Product not found - retrying...")
         _handle_retry(ch, method, properties, body)
@@ -62,12 +82,14 @@ def callback(ch, method, properties, body):
 
 def _handle_retry(ch, method, properties, body):
     """Handle message retry with TTL"""
+    from inventory.metrics import stock_retry_count, stock_failures
     headers = properties.headers or {}
     retry_count = int(headers.get("x-retry-count", 0))
 
     if retry_count >= MAX_RETRIES:
         print(f"[☠] Max retries ({MAX_RETRIES}) reached → DLQ")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        stock_failures.inc()
         return
 
     retry_count += 1
@@ -88,10 +110,12 @@ def _handle_retry(ch, method, properties, body):
 
     # ACK the original message after successfully publishing to retry queue
     ch.basic_ack(delivery_tag=method.delivery_tag)
-
+    stock_retry_count.inc()
 
 
 def start_consumer():
+    start_http_server(8001)
+    print("[📊] Prometheus metrics running on :8001")
     connection = pika.BlockingConnection(
         pika.ConnectionParameters(
             host="localhost",

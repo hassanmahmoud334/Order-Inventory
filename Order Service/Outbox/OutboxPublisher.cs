@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using Order_Service.Data;
 using Order_Service.Messaging;
+using Order_Service.Metrics;
 using System.Text.Json;
 
 namespace Order_Service.Outbox
@@ -57,6 +58,9 @@ namespace Order_Service.Outbox
                 }
 
                 await db.SaveChangesAsync(stoppingToken);
+                OrderMetrics.OutboxPending.Set(
+                    await db.OutboxMessages.CountAsync(x => x.ProcessedAt == null)
+                );
                 await Task.Delay(2000, stoppingToken);
             }
         }

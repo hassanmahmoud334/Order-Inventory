@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Order_Service.Data;
 using Order_Service.Messaging;
+using Order_Service.Metrics;
 using Order_Service.Models;
 using System.Text.Json;
 
@@ -58,7 +59,7 @@ namespace Order_Service.Services
 
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
-
+            OrderMetrics.OrdersCreated.Inc();
             return new PlaceOrderResponse
             {
                 OrderId = orderId.ToString(),
